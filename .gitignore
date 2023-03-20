@@ -16,3 +16,4 @@ messages*.json
 test.ts
 TestData
 authstates/*.json
+holidays/*.json
