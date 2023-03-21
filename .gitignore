@@ -17,3 +17,4 @@ TestData
 authstates/*.json
 holidays/*.json
 test.js
+test.json
