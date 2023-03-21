@@ -1,12 +1,17 @@
 const makeWASocket = require('@adiwajshing/baileys').default
 const { DisconnectReason, useMultiFileAuthState } = require('@adiwajshing/baileys')
 const fs = require('fs');
+require('dotenv').config()
 
+const apiKey = process.env.CALENDARIFIC_API_KEY;
+const countryId = process.env.CALENDARIFIC_COUNTRY_ID;
 
 let replyLimit = -1;
 let replyCount = 0;
 let lastUserMessageLog = [];
-let countryCodeToReply = ['65', '1'];
+
+let countryCodeToReply = ['62881036499099'];
+let countryCodeToReplyForHoliday = ['65', '1', '62881036499099'];
 let excludedHolidayNames = ['Maha Shivaratri', 'Holi', 'March Equinox', 'June Solstice', 'Raksha Bandhan', 'Janmashtami', 'Ganesh Chaturthi',
     'September Equinox', 'Navaratri', 'Dussehra', 'Diwali / Deepavali', 'December Solstice']
 let tz = 'Asia/Jakarta'
@@ -14,8 +19,8 @@ process.env.TZ = tz;
 
 
 async function getHolidayCalendarific(year) {
-    let holidays = [];
-    const resp = await fetch("https://calendarific.com/api/v2/holidays?&api_key=4b9a11ffd075c2a12df25b1aaf8ca53f905afb8d&country=ID&year=" + year, {
+    let calendarificHolidays = [];
+    const resp = await fetch(`https://calendarific.com/api/v2/holidays?&api_key=${apiKey}&country=${countryId}&year=${year}`, {
         "headers": {
             "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
             "accept-language": "en-US,en;q=0.9,id-ID;q=0.8,id;q=0.7,zh-CN;q=0.6,zh;q=0.5,ja;q=0.4",
@@ -37,18 +42,17 @@ async function getHolidayCalendarific(year) {
     if (content.response && content.response.holidays) {
         content.response.holidays.forEach(element => {
             if (excludedHolidayNames.indexOf(element.name) == -1) {
-                holidays.push({
+                calendarificHolidays.push({
                     isoDate: element.date.iso,
                     name: element.name
                 });
             }
         });
     }
-    return holidays;
+    return calendarificHolidays;
 }
 
-async function getHolidays() {
-
+function getHolidays() {
     return new Promise((resolve, reject) => {
         const curYear = new Date().getFullYear();
         let thisYearHoliday = [];
@@ -57,7 +61,14 @@ async function getHolidays() {
         fs.access(fileName, fs.constants.F_OK, async (err) => {
             //console.log(`${file} ${err ? 'does not exist' : 'exists'}`);
             if (err) { //not exists
-                thisYearHoliday = await getHolidayCalendarific(curYear);
+                const calendarificHolidays = await getHolidayCalendarific(curYear);
+                const curDate = new Date();
+                const dateFormatter = Intl.DateTimeFormat('sv-SE');
+                const curIsoDate = dateFormatter.format(curDate);
+                thisYearHoliday = {
+                    lastUpdate: curIsoDate,
+                    holidays: calendarificHolidays
+                }
                 fs.writeFile(fileName, JSON.stringify(thisYearHoliday, null, 2), (err) => {
                     if (err) {
                         console.error('Error writing file: ' + err.toString())
@@ -86,7 +97,8 @@ async function isTodayHoliday() {
     const curDate = new Date();
     const dateFormatter = Intl.DateTimeFormat('sv-SE');
     const curIsoDate = dateFormatter.format(curDate);
-    const holidays = await getHolidays();
+    const holidayObject = await getHolidays();
+    const holidays = holidayObject.holidays;
     const curHolidayIndex = holidays.findIndex(i => i.isoDate == curIsoDate);
     const isHoliday = curHolidayIndex > -1
     return isHoliday;
@@ -119,28 +131,42 @@ async function connectToWhatsApp() {
     })
     sock.ev.on('messages.upsert', async (m) => {
         // console.log(JSON.stringify(m, undefined, 2));
-        let isValidToReply = true;
         if (replyLimit == -1) {
             replyCount = -99;
         }
-        if (replyCount < replyLimit && m.messages[0].key.remoteJid && !m.messages[0].key.fromMe) {
-            let curUserIdx = lastUserMessageLog.findIndex(i => i.remoteJid === m.messages[0].key.remoteJid);
+
+        if (!m.messages[0] || !m.messages[0].key || !m.messages[0].key.remoteJid || m.messages[0].key.fromMe) {
+            return;
+        }
+
+        const msgTimeStamp = m.messages[0].messageTimestamp;
+        const remoteJid = m.messages[0].key.remoteJid;
+        const phone = remoteJid.split('@')[0];
+
+        const curTime = Math.floor(Date.now() / 1000)
+        const previousDayTime = curTime - 86400;
+        const isNewMessage = msgTimeStamp > (curTime - 300);
+
+        if(!isNewMessage) {
+            console.warn('[warn] old message received');
+            return;
+        }
+
+        if (replyCount < replyLimit && isNewMessage) {
+            let curUserIdx = lastUserMessageLog.findIndex(i => i.remoteJid === remoteJid);
             let lastMsgTime = 1;
             if (curUserIdx > -1) {
                 lastMsgTime = lastUserMessageLog[curUserIdx].lastMsgTime;
-                lastUserMessageLog[curUserIdx].remoteJid = m.messages[0].key.remoteJid;
-                lastUserMessageLog[curUserIdx].lastMsgTime = m.messages[0].messageTimestamp;
+                lastUserMessageLog[curUserIdx].remoteJid = remoteJid;
+                lastUserMessageLog[curUserIdx].lastMsgTime = msgTimeStamp;
             }
             else {
                 lastUserMessageLog.push({
-                    remoteJid: m.messages[0].key.remoteJid,
-                    lastMsgTime: m.messages[0].messageTimestamp
+                    remoteJid: remoteJid,
+                    lastMsgTime: msgTimeStamp
                 })
-                curUserIdx = lastUserMessageLog.findIndex(i => i.remoteJid === m.messages[0].key.remoteJid);
+                curUserIdx = lastUserMessageLog.findIndex(i => i.remoteJid === remoteJid);
             }
-            // const curMsgTime = m.messages[0].messageTimestamp
-            const curTime = Math.floor(Date.now() / 1000)
-            const previousDayTime = curTime - 86400;
 
             const curHour = new Date().getHours();
             const isNight = curHour >= 21 || curHour <= 7
@@ -149,28 +175,34 @@ async function connectToWhatsApp() {
                 isValidSendNightMsg = false;
             }
 
-            const isHoliday = isTodayHoliday();
-            const isValidSendDailyMsg = (previousDayTime > lastMsgTime && isHoliday);
+            const isHoliday = await isTodayHoliday();
+            const isValidSendDailyMsg = (previousDayTime > lastMsgTime);
+            const isValidSendDailyMsgHoliday = (previousDayTime > lastMsgTime && isHoliday);
             const isValidNumber = countryCodeToReply.some(elem => phone.match('^' + elem));
+            const isValidNumberHoliday = countryCodeToReplyForHoliday.some(elem => phone.match('^' + elem));
 
             if (isValidSendNightMsg) {
-                lastUserMessageLog[curUserIdx].lastNightMsgTime = m.messages[0].messageTimestamp;
-                console.log('[night mode] replying to', m.messages[0].key.remoteJid)
-                await sock.sendMessage(m.messages[0].key.remoteJid,
+                lastUserMessageLog[curUserIdx].lastNightMsgTime = msgTimeStamp;
+                console.log('[night mode] replying to', remoteJid)
+                await sock.sendMessage(remoteJid,
                     {
                         text: `[Auto-Reply] Thank you for your message. \n I'm currently not available. \n Just leave message & I will respond later!`
                     });
             }
-            else if (!isNight && isValidSendDailyMsg && isValidNumber) {
-                console.log('replying to', m.messages[0].key.remoteJid)
-                await sock.sendMessage(m.messages[0].key.remoteJid,
+            else if (!isNight && isValidSendDailyMsgHoliday && isValidNumberHoliday) {
+                console.log('replying to', remoteJid)
+                await sock.sendMessage(remoteJid,
                     {
-                    text: `[Auto-Reply] Thank you for your message. \n I'm currently on leave. \n Just leave message & I will respond later!`
-                });
-                // await sock.sendMessage(m.messages[0].key.remoteJid,
-                //     {
-                //         text: `[Auto-Reply] Thank you for your message. \n I'm currently not available. \n Just leave message & I will respond later!`
-                //     });
+                        text: `[Auto-Reply] Thank you for your message. \n I'm currently on leave / holiday. \n Just leave messages & I will respond later!`
+                    });
+                replyCount++;
+            }
+            else if (!isNight && isValidSendDailyMsg && isValidNumber) {
+                console.log('replying to', remoteJid)
+                await sock.sendMessage(remoteJid,
+                    {
+                        text: `[Auto-Balas] Halo! terima kasih sudah mengirimkan pesan \n Silahkan tinggalkan pesan, saya akan balas nanti!`
+                    });
                 replyCount++;
             }
         }

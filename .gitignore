@@ -13,7 +13,7 @@ docs
 browser-token.json
 Proxy
 messages*.json
-test.ts
 TestData
 authstates/*.json
 holidays/*.json
+test.js
