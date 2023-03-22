@@ -40,7 +40,7 @@ async function connectToWhatsApp() {
         }
     })
     sock.ev.on('messages.upsert', async (m) => {
-        // console.log(JSON.stringify(m, undefined, 2));
+        console.log(JSON.stringify(m, undefined, 2));
         if (replyLimit == -1) {
             replyCount = -99;
         }
@@ -52,6 +52,11 @@ async function connectToWhatsApp() {
         const msgTimeStamp = m.messages[0].messageTimestamp;
         const remoteJid = m.messages[0].key.remoteJid;
         const phone = remoteJid.split('@')[0];
+
+        let isGroupMsg = phone.split['-'][1] == null ? false : true;
+        if (isGroupMsg) {
+            return;
+        }
 
         const curTime = Math.floor(Date.now() / 1000)
         const previousDayTime = curTime - 86400;
